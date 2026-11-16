@@ -1,5 +1,72 @@
-const CACHE='film-cult-v1';
-const ASSETS=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
-self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
-self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(caches.match(e.request).then(cached=>cached||fetch(e.request).then(r=>{if(r.ok){const copy=r.clone();caches.open(CACHE).then(c=>c.put(e.request,copy));}return r;}).catch(()=>caches.match('./index.html'))));});
+
+const CACHE_VERSION = "film-cult-v4";
+const CACHE_NAME = `${CACHE_VERSION}-runtime`;
+
+self.addEventListener("install", (event) => {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+
+    await Promise.all(
+      keys
+        .filter((key) => key.startsWith("film-cult-") && key !== CACHE_NAME)
+        .map((key) => caches.delete(key))
+    );
+
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+
+  if (url.origin !== self.location.origin) return;
+  if (request.method !== "GET") return;
+
+  if (
+    request.mode === "navigate" ||
+    request.destination === "document" ||
+    url.pathname.endsWith(".html")
+  ) {
+    event.respondWith((async () => {
+      try {
+        return await fetch(request, { cache: "no-store" });
+      } catch (error) {
+        const cached = await caches.match(request);
+        if (cached) return cached;
+
+        return new Response(
+          "Connessione assente. Riprova.",
+          {
+            status: 503,
+            headers: {
+              "Content-Type": "text/plain; charset=utf-8"
+            }
+          }
+        );
+      }
+    })());
+
+    return;
+  }
+
+  event.respondWith((async () => {
+    try {
+      const response = await fetch(request);
+
+      if (response.ok && response.type === "basic") {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(request, response.clone());
+      }
+
+      return response;
+    } catch (error) {
+      const cached = await caches.match(request);
+      return cached || new Response("", { status: 504 });
+    }
+  })());
+});
